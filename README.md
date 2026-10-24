@@ -185,3 +185,22 @@ biofile-cli search AANB01 --path-map "/mnt/LDT_Lv1_Illumina=/storage/illumina_lv
   }
 }
 ```
+
+---
+
+## 常見問題：客戶端主機使用情境 FAQ
+
+### Q1: 安裝後，在客戶端下指令還需要手動帶 `--path-map` 或輸入路徑參數嗎？
+**完全不需要！**
+安裝腳本已經將智慧路徑轉換內建在客戶端的 `biofile-cli` wrapper 中：
+- **查詢輸出**：自動將 77 主機路徑換成你本機可直接存取的路徑。
+- **查詢輸入**：如果你指定 `--root /storage/illumina_lv1` 或 `biofile-cli ls /storage/illumina_lv1`，wrapper 會**自動反向轉回** 77 的 `/mnt/LDT_Lv1_Illumina` 送去資料庫查詢，達成雙向透明無感！
+
+### Q2: 如果 77 有掛載該 NFS，但我的客戶端主機「完全沒有掛載」該磁區，搜尋結果會變怎樣？
+系統提供最安全明確的處理機制：
+1. **保留 77 原始路徑，並明確標記提示**：
+   在一般的終端機表格中，行尾會自動標記 `[⚠️ NOT MOUNTED ON THIS HOST]`，清楚告訴你「這個檔案確實存在於 77 的 NFS，但你本機目前未掛載此磁區，無法直接讀取」。
+2. **JSON / Agent 模式**：
+   回傳資料會包含 `"mounted_on_client": false`，AI Agent 可以精確判斷「不能直接本機 open，需要透過其他節點或請管理者掛載」。
+3. **只看本機有的檔案 (`--local-only`)**：
+   如果你只希望撈出「本機目前有掛載、管線可立刻讀取」的檔案，只要加上 `--local-only`，未掛載的磁區結果就會自動過濾掉！
