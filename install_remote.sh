@@ -128,6 +128,43 @@ if env_map:
             path_map[r.strip()] = l.strip()
 
 # Check incoming CLI arguments: reverse-translate client path to 77 path if user passed local path
+# Handle --sync-mounts to refresh local NFS mountinfo against 77 catalog
+if "--sync-mounts" in sys.argv:
+    print("Refreshing local NFS mount mappings against 77 server...")
+    try:
+        # fetch remote catalog
+        cmd = ["ssh", "-T", f"{SERVER_USER}@{SERVER_HOST}", "cat", "/mnt/home/cgh2/pi-projects/biofile-cli/nfs_mounts_77.json"]
+        remote_catalog = json.loads(subprocess.check_output(cmd).decode())
+        
+        # read local mountinfo
+        local_mounts = {}
+        with open("/proc/self/mountinfo", "r") as f:
+            for line in f:
+                parts = line.strip().split(" - ")
+                if len(parts) == 2:
+                    left, right = parts[0].split(), parts[1].split()
+                    mp = left[4].replace("\\040", " ")
+                    fs = right[0]
+                    dev = right[1] if len(right) > 1 else ""
+                    if fs.startswith("nfs") and "/.snapshot" not in mp:
+                        local_mounts[dev] = mp
+        
+        new_map = {}
+        unmounted = []
+        for dev, r_mp in remote_catalog.items():
+            if dev in local_mounts:
+                new_map[r_mp] = local_mounts[dev]
+            else:
+                unmounted.append(r_mp)
+        
+        with open(MAP_FILE, "w") as f:
+            json.dump({"mapping": new_map, "unmounted_roots": unmounted}, f, indent=2, ensure_ascii=False)
+        print(f"Successfully refreshed {len(new_map)} mapped volumes. Saved to {MAP_FILE}")
+        sys.exit(0)
+    except Exception as e:
+        sys.stderr.write(f"Error during --sync-mounts: {e}\n")
+        sys.exit(1)
+
 filtered_argv = []
 client_local_filter = False
 
