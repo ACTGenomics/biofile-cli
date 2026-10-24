@@ -78,6 +78,58 @@ biofile-cli status
 
 ---
 
+---
+
+## 跨主機 NFS 掛載路徑對應 (Cross-Host Path Mapping)
+
+### 痛點場景
+在公司叢集中，多台運算主機通常掛載相同的實體 NFS 儲存（例如 NAS IP 相同），但**本機掛載點名稱可能不同**：
+- **77 索引主機**：`/mnt/LDT_Lv1_Illumina/ProjectA/sample.bam`
+- **運算節點 / 開發機**：掛載在 `/storage/illumina_lv1/...` 或 `/data/Illumina/...`
+
+若未做路徑轉換，客戶端主機上的 Agent 或分析腳本收到 77 主機的路徑時，執行 `open()` 或 `samtools` 會直接報錯 `No such file or directory`。
+
+---
+
+### 解決方案：支援 3 種路徑對應模式 (Path Translation)
+
+```
+[77 主機資料庫原始路徑]
+/mnt/LDT_Lv1_Illumina/ProjectA/sample.bam
+                 │
+                 ▼ (路徑對應層 Path Mapping)
+[轉換成客戶端主機的有效本機路徑]
+/storage/illumina_lv1/ProjectA/sample.bam  <── 客戶端 Agent / 管線直接可用！
+```
+
+#### 模式 1：環境變數對應 (推薦，對 Pipeline / 容器最方便)
+在客戶端主機的 `~/.bashrc` 或容器環境變數中設定：
+```bash
+# 語法格式: 遠端前綴=本機前綴,遠端前綴2=本機前綴2
+export BIOFILE_PATH_MAP="/mnt/LDT_Lv1_Illumina=/storage/illumina_lv1,/mnt/vol_wgs=/data/wgs"
+```
+
+#### 模式 2：設定檔對應 (對 AI Agent 最友善)
+在客戶端使用者家目錄建立 `~/.biofile_map.json`：
+```json
+{
+  "/mnt/LDT_Lv1_Illumina": "/storage/illumina_lv1",
+  "/mnt/vol_wgs": "/data/wgs",
+  "/mnt/RD_Result": "/local/rd_result"
+}
+```
+
+#### 模式 3：CLI 即時參數對應
+在單次命令中動態傳入 `--path-map`：
+```bash
+# 單次搜尋即時轉換路徑
+biofile-cli search AANB01 --path-map "/mnt/LDT_Lv1_Illumina=/storage/illumina_lv1" -1
+```
+
+> 🎯 **效果**：
+> 1. 客戶端主機依然享受 77 主機 **1,247 萬筆檔案的毫秒級 FTS5 檢索**。
+> 2. 回傳給客戶端終端機與 AI Agent 的路徑，**全部自動無縫替換為客戶端實體可讀取的有效路徑**！
+
 ## MCP Server 配置 (給 AI Agent 使用)
 
 在 Claude Code、Cursor、Windsurf 或自建 Agent 的設定檔（如 `~/.claude/claude_desktop_config.json` 或 `.mcp.json`）中加入：
