@@ -91,7 +91,35 @@ biofile-cli status
 
 ---
 
-### 解決方案：支援 3 種路徑對應模式 (Path Translation)
+### 解決方案：安裝時自動偵測與比對 NFS 來源 (Automated NFS Auto-Mapping) 🚀
+
+本工具在客戶端安裝時，會**自動掃描兩台主機的 `/proc/self/mountinfo`**：
+1. 自動讀取客戶端本機所有 NFS 掛載的 **「實體來源 IP 與 Volume 匯出路徑」**（如 `192.168.5.142:/vol_2024_TP_LDT_Lv1_Illumina`）。
+2. 自動比對 77 索引主機上的對應 Volume。
+3. **若掛載點名稱不同，自動產生 `~/.biofile_map.json` 映射表**，完全不需要人工手動調查與輸入！
+
+```
+[客戶端執行一鍵安裝]
+        │
+        ├── 自動掃描本機 NFS: 192.168.5.142:/vol_2024_TP_LDT_Lv1_Illumina -> /storage/illumina_lv1
+        ├── 比對 77 主機 NFS: 192.168.5.142:/vol_2024_TP_LDT_Lv1_Illumina -> /mnt/LDT_Lv1_Illumina
+        └── 自動產生映射: "/mnt/LDT_Lv1_Illumina" => "/storage/illumina_lv1" (寫入 ~/.biofile_map.json)
+```
+
+---
+
+### 客戶端查詢時的自動轉換機制
+
+```
+[77 主機資料庫原始路徑]
+/mnt/LDT_Lv1_Illumina/ProjectA/sample.bam
+                 │
+                 ▼ (客戶端 biofile-cli 自動依 ~/.biofile_map.json 轉換)
+[轉換成客戶端主機的有效本機路徑]
+/storage/illumina_lv1/ProjectA/sample.bam  <── 客戶端 Agent / 管線直接可用！
+```
+
+除了自動化產生之外，亦支援以下手動彈性覆寫方式：
 
 ```
 [77 主機資料庫原始路徑]
