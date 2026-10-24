@@ -204,3 +204,111 @@ biofile-cli search AANB01 --path-map "/mnt/LDT_Lv1_Illumina=/storage/illumina_lv
    回傳資料會包含 `"mounted_on_client": false`，AI Agent 可以精確判斷「不能直接本機 open，需要透過其他節點或請管理者掛載」。
 3. **只看本機有的檔案 (`--local-only`)**：
    如果你只希望撈出「本機目前有掛載、管線可立刻讀取」的檔案，只要加上 `--local-only`，未掛載的磁區結果就會自動過濾掉！
+
+---
+
+## 生物資訊管線整合 (Nextflow & Snakemake Integration)
+
+在大型生信分析中，最耗時且常卡死的就是**「在幾百 TB 的儲存池中動態尋找每個檢體的 FASTQ / BAM 實體路徑」**。傳統寫法常在 pipeline 前期執行 `find` 或 `glob`，容易導致 NAS 當機。
+
+透過 `biofile-cli`，管線可以在 **0.5 秒內完成檢體定位**，並自動轉換為運算節點的本機有效路徑。
+
+---
+
+### 1. Nextflow 管線整合範例
+
+在 Nextflow 中，可直接利用 `Channel.fromPath` 或在進程內以命令列提取路徑建立輸入通道：
+
+#### 模式 A：動態生成樣本通道 (Channel Setup)
+```groovy
+// main.nf
+params.sample_id = "AANB01_513"
+
+// 利用 biofile-cli 秒級抓取該檢體的 R1 與 R2 FASTQ (保證本地可讀)
+channel
+    .fromPath(
+        "biofile-cli search "${params.sample_id}*" --ext fastq.gz -1 --local-only"
+        .execute().text.readLines()
+    )
+    .filter { it =~ /_R1/ }
+    .map { file -> 
+        def r1 = file
+        def r2 = file.toString().replaceAll('_R1', '_R2')
+        return tuple(params.sample_id, file(r1), file(r2))
+    }
+    .set { fastq_ch }
+
+process FASTQC {
+    tag "$sample_id"
+
+    input:
+    tuple val(sample_id), path(r1), path(r2)
+
+    output:
+    path "*_fastqc.html"
+
+    script:
+    """
+    fastqc $r1 $r2
+    """
+}
+
+workflow {
+    FASTQC(fastq_ch)
+}
+```
+
+---
+
+### 2. Snakemake 管線整合範例
+
+在 Snakemake 的 `Snakefile` 中，可利用 Python 內建函式呼叫 `biofile-cli`，秒級自動解析輸入檔案：
+
+```python
+# Snakefile
+import subprocess
+
+def get_sample_bam(wildcards):
+    cmd = ["biofile-cli", "sample", wildcards.sample, "--ext", "bam", "-1", "--local-only"]
+    res = subprocess.check_output(cmd).decode().strip().splitlines()
+    if not res:
+        raise FileNotFoundError(f"Sample {wildcards.sample} BAM not found on mounted storage!")
+    return res[0]  # 回傳第一個符合的 BAM 絕對路徑
+
+rule all:
+    input:
+        "results/qc/{sample}.flagstat.txt"
+
+rule samtools_qc:
+    input:
+        bam = get_sample_bam
+    output:
+        qc = "results/qc/{sample}.flagstat.txt"
+    threads: 4
+    shell:
+        """
+        samtools flagstat -@ {threads} {input.bam} > {output.qc}
+        """
+```
+
+---
+
+### 3. 大量樣本批次生成 Samplesheet (Batch Processing)
+
+對於幾十到幾百個樣品的大型 Run，可一鍵生成 CSV / TSV Samplesheet：
+
+```bash
+# 批次查詢樣品列表並生成 Nextflow 專用 samplesheet.csv
+echo "sample_id,fastq_1,fastq_2" > samplesheet.csv
+for sample in AANB01_513 AANB01_514 AANB01_515; do
+    R1=$(biofile-cli search "${sample}*R1*" --ext fastq.gz -1 --local-only | head -n 1)
+    R2=$(biofile-cli search "${sample}*R2*" --ext fastq.gz -1 --local-only | head -n 1)
+    if [ -n "$R1" ] && [ -n "$R2" ]; then
+        echo "${sample},${R1},${R2}" >> samplesheet.csv
+    fi
+done
+```
+
+> 💡 **管線整合優勢**：
+> - **零 NAS 負載**：管線發動前不再執行巨量網路硬碟搜尋。
+> - **安全防呆**：搭配 `--local-only`，保證吐出的路徑都在該運算節點本機真實掛載且可讀取。
